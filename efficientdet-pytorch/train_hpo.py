@@ -9,6 +9,13 @@ NVIDIA CUDA specific speedups adopted from NVIDIA Apex examples
 
 Hacked together by Ross Wightman (https://github.com/rwightman)
 """
+from effdet.anchors import Anchors, AnchorLabeler
+from effdet.data import resolve_input_config, SkipSubset
+from effdet import create_model, unwrap_bench, create_loader, create_dataset, create_evaluator
+from timm.scheduler import create_scheduler
+from timm.optim import create_optimizer
+from timm.models import resume_checkpoint, load_checkpoint
+import timm.utils as utils
 import os
 import argparse
 import time
@@ -42,10 +49,6 @@ try:
 except AttributeError:
     pass
 
-import timm.utils as utils
-from timm.models import resume_checkpoint, load_checkpoint
-from timm.optim import create_optimizer
-from timm.scheduler import create_scheduler
 try:
     # new timm import
     from timm.layers import set_layer_config, convert_sync_batchnorm
@@ -60,16 +63,14 @@ except ImportError:
             "Falling back to torch.nn.SyncBatchNorm, does not properly work with timm models in new versions.")
         convert_sync_batchnorm = torch.nn.SyncBatchNorm.convert_sync_batchnorm
 
-from effdet import create_model, unwrap_bench, create_loader, create_dataset, create_evaluator
-from effdet.data import resolve_input_config, SkipSubset
-from effdet.anchors import Anchors, AnchorLabeler
 
 torch.backends.cudnn.benchmark = True
 
 
 # The first arg parser parses out only the --config argument, this argument is used to
 # load a yaml file containing key-values that override the defaults for the main parser below
-config_parser = parser = argparse.ArgumentParser(description='Training Config', add_help=False)
+config_parser = parser = argparse.ArgumentParser(
+    description='Training Config', add_help=False)
 parser.add_argument('-c', '--config', default='', type=str, metavar='FILE',
                     help='YAML config file specifying default arguments')
 
@@ -82,8 +83,10 @@ parser.add_argument('--dataset', default='coco', type=str, metavar='DATASET',
                     help='Name of dataset to train (default: "coco"')
 parser.add_argument('--model', default='tf_efficientdet_d1', type=str, metavar='MODEL',
                     help='Name of model to train (default: "tf_efficientdet_d1"')
-utils.add_bool_arg(parser, 'redundant-bias', default=None, help='override model config for redundant bias')
-utils.add_bool_arg(parser, 'soft-nms', default=None, help='override model config for soft-nms')
+utils.add_bool_arg(parser, 'redundant-bias', default=None,
+                   help='override model config for redundant bias')
+utils.add_bool_arg(parser, 'soft-nms', default=None,
+                   help='override model config for soft-nms')
 parser.add_argument('--val-skip', type=int, default=0, metavar='N',
                     help='Skip every N validation samples.')
 parser.add_argument('--num-classes', type=int, default=None, metavar='N',
@@ -172,9 +175,12 @@ parser.add_argument('--train-interpolation', type=str, default='random',
                     help='Training interpolation (random, bilinear, bicubic default: "random")')
 
 # loss
-parser.add_argument('--smoothing', type=float, default=None, help='override model config label smoothing')
-utils.add_bool_arg(parser, 'jit-loss', default=None, help='override model config for torchscript jit loss fn')
-utils.add_bool_arg(parser, 'legacy-focal', default=None, help='override model config to use legacy focal loss')
+parser.add_argument('--smoothing', type=float, default=None,
+                    help='override model config label smoothing')
+utils.add_bool_arg(parser, 'jit-loss', default=None,
+                   help='override model config for torchscript jit loss fn')
+utils.add_bool_arg(parser, 'legacy-focal', default=None,
+                   help='override model config to use legacy focal loss')
 
 # Model Exponential Moving Average
 parser.add_argument('--model-ema', action='store_true', default=False,
@@ -247,6 +253,7 @@ def get_clip_parameters(model, exclude_head=False):
     else:
         return model.parameters()
 
+
 def objective(hyperparameters):
     utils.setup_default_logging()
     args, args_text = _parse_args()
@@ -256,7 +263,6 @@ def objective(hyperparameters):
     args.checkpoint = f"params/{args.model}.pth.tar"
     print(f"Learning rate is configured to {args.lr}")
     print(f"Model architecture is configured to {args.model}")
-
 
     args.pretrained_backbone = not args.no_pretrained_backbone
     args.prefetcher = not args.no_prefetcher
@@ -289,12 +295,14 @@ def objective(hyperparameters):
         if has_native_amp:
             use_amp = 'native'
         else:
-            logging.warning("Native AMP not available, using float32. Upgrade to PyTorch 1.6.")
+            logging.warning(
+                "Native AMP not available, using float32. Upgrade to PyTorch 1.6.")
     elif args.apex_amp:
         if has_apex:
             use_amp = 'apex'
         else:
-            logging.warning("APEX AMP not available, using float32. Install NVIDA apex")
+            logging.warning(
+                "APEX AMP not available, using float32. Install NVIDA apex")
 
     utils.random_seed(args.seed, args.rank)
 
@@ -316,7 +324,8 @@ def objective(hyperparameters):
     model_config = model.config  # grab before we obscure with DP/DDP wrappers
 
     if args.local_rank == 0:
-        logging.info('Model %s created, param count: %d' % (args.model, sum([m.numel() for m in model.parameters()])))
+        logging.info('Model %s created, param count: %d' %
+                     (args.model, sum([m.numel() for m in model.parameters()])))
 
     model.cuda()
     if args.channels_last:
@@ -342,14 +351,15 @@ def objective(hyperparameters):
         model = torch.jit.script(model)
 
     optimizer = create_optimizer(args, model)
- 
+
     amp_autocast = suppress  # do nothing
     loss_scaler = None
     if use_amp == 'native':
         amp_autocast = torch.cuda.amp.autocast
         loss_scaler = utils.NativeScaler()
         if args.local_rank == 0:
-            logging.info('Using native Torch AMP. Training in mixed precision.')
+            logging.info(
+                'Using native Torch AMP. Training in mixed precision.')
     elif use_amp == 'apex':
         model, optimizer = amp.initialize(model, optimizer, opt_level='O1')
         loss_scaler = utils.ApexScaler()
@@ -409,7 +419,8 @@ def objective(hyperparameters):
     if args.local_rank == 0:
         logging.info('Scheduled epochs: {}'.format(num_epochs))
 
-    loader_train, loader_eval, evaluator = create_datasets_and_loaders(args, model_config)
+    loader_train, loader_eval, evaluator = create_datasets_and_loaders(
+        args, model_config)
 
     if model_config.num_classes < loader_train.dataset.parser.max_label:
         logging.error(
@@ -432,7 +443,9 @@ def objective(hyperparameters):
             args.model
         ])
         '''
-        exp_name = "lr={:.4f}_model={}".format(args.lr, args.model)
+        date = datetime.now().strftime("%Y%m%d-%H%M%S")
+        exp_name = "lr={:.4f}_model={}_date={}".format(
+            args.lr, args.model, date)
         output_dir = utils.get_outdir(output_base, 'train', exp_name)
         decreasing = True if eval_metric == 'loss' else False
         saver = utils.CheckpointSaver(
@@ -469,15 +482,19 @@ def objective(hyperparameters):
 
             if args.distributed and args.dist_bn in ('broadcast', 'reduce'):
                 if args.local_rank == 0:
-                    logging.info("Distributing BatchNorm running means and vars")
-                utils.distribute_bn(model, args.world_size, args.dist_bn == 'reduce')
+                    logging.info(
+                        "Distributing BatchNorm running means and vars")
+                utils.distribute_bn(model, args.world_size,
+                                    args.dist_bn == 'reduce')
 
             # the overhead of evaluating with coco style datasets is fairly high, so just ema or non, not both
             if model_ema is not None:
                 if args.distributed and args.dist_bn in ('broadcast', 'reduce'):
-                    utils.distribute_bn(model_ema, args.world_size, args.dist_bn == 'reduce')
+                    utils.distribute_bn(
+                        model_ema, args.world_size, args.dist_bn == 'reduce')
 
-                eval_metrics = validate(model_ema.module, loader_eval, args, evaluator, log_suffix=' (EMA)')
+                eval_metrics = validate(
+                    model_ema.module, loader_eval, args, evaluator, log_suffix=' (EMA)')
             else:
                 eval_metrics = validate(model, loader_eval, args, evaluator)
 
@@ -495,18 +512,21 @@ def objective(hyperparameters):
                 )
 
                 # save proper checkpoint with eval metric
-                best_metric, best_epoch = saver.save_checkpoint(epoch=epoch, metric=eval_metrics[eval_metric])
+                best_metric, best_epoch = saver.save_checkpoint(
+                    epoch=epoch, metric=eval_metrics[eval_metric])
 
     except KeyboardInterrupt:
         pass
     if best_metric is not None:
-        logging.info('*** Best metric: {0} (epoch {1})'.format(best_metric, best_epoch))
+        logging.info(
+            '*** Best metric: {0} (epoch {1})'.format(best_metric, best_epoch))
 
     logging.shutdown()
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
 
     return best_metric
+
 
 def create_datasets_and_loaders(
         args,
@@ -583,7 +603,8 @@ def create_datasets_and_loaders(
         collate_fn=collate_fn,
     )
 
-    evaluator = create_evaluator(args.dataset, loader_eval.dataset, distributed=args.distributed, pred_yxyx=False)
+    evaluator = create_evaluator(
+        args.dataset, loader_eval.dataset, distributed=args.distributed, pred_yxyx=False)
 
     return loader_train, loader_eval, evaluator
 
@@ -606,7 +627,8 @@ def train_epoch(
     losses_m = utils.AverageMeter()
 
     model.train()
-    clip_params = get_clip_parameters(model, exclude_head='agc' in args.clip_mode)
+    clip_params = get_clip_parameters(
+        model, exclude_head='agc' in args.clip_mode)
     end = time.time()
     last_idx = len(loader) - 1
     num_updates = epoch * len(loader)
@@ -636,7 +658,8 @@ def train_epoch(
         else:
             loss.backward()
             if args.clip_grad is not None:
-                utils.dispatch_clip_grad(clip_params, value=args.clip_grad, mode=args.clip_mode)
+                utils.dispatch_clip_grad(
+                    clip_params, value=args.clip_grad, mode=args.clip_mode)
             optimizer.step()
 
         torch.cuda.synchronize()
@@ -667,7 +690,8 @@ def train_epoch(
                 if args.save_images and output_dir:
                     torchvision.utils.save_image(
                         input,
-                        os.path.join(output_dir, 'train-batch-%d.jpg' % batch_idx),
+                        os.path.join(
+                            output_dir, 'train-batch-%d.jpg' % batch_idx),
                         padding=0,
                         normalize=True,
                     )
@@ -677,7 +701,8 @@ def train_epoch(
             saver.save_recovery(epoch, batch_idx=batch_idx)
 
         if lr_scheduler is not None:
-            lr_scheduler.step_update(num_updates=num_updates, metric=losses_m.avg)
+            lr_scheduler.step_update(
+                num_updates=num_updates, metric=losses_m.avg)
 
         end = time.time()
         # end for
@@ -736,21 +761,24 @@ if __name__ == '__main__':
     N_TRAILS = 20
 
     space = DesignSpace().parse(
-        [{'name': 'lr', 'type': 'num', 'lb': 1e-3, 'ub': 1e-1},
-         {'name': 'model', 'type': 'cat', 'categories' : ["efficientdet_d0", "efficientdet_d1", "tf_efficientdet_d2"]}
-        ])
+        [{'name': 'lr', 'type': 'num', 'lb': 1e-4, 'ub': 1e-2},
+         {'name': 'model', 'type': 'cat', 'categories': [
+             "efficientdet_d0", "efficientdet_d1", "tf_efficientdet_d2"]}
+         ])
     opt = HEBO(space, rand_sample=2)
     results = []
     for i in range(N_TRAILS):
         rec = opt.suggest(n_suggestions=1)
         acc = objective(rec)
-        opt.observe(rec, np.array([acc]))
+        acc = np.array([[acc]], dtype=float)
+        print(acc)
+        opt.observe(rec, acc)
         print('After %d iterations, best obj is %.2f' % (i, opt.y.max()))
 
         # Add to log
-        rec["acc"] = opt.y[i][0]
-        results.append(rec)
+        rec_cp = rec.copy()
+        rec_cp["acc"] = opt.y[i][0]
+        results.append(rec_cp)
 
     concatenated_df = pd.concat(results)
     concatenated_df.to_csv("logs/results.csv", index=False)
-
