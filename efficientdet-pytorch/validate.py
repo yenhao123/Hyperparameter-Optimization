@@ -96,7 +96,7 @@ parser.add_argument('--torchcompile', nargs='?', type=str, default=None, const='
                     help="Enable compilation w/ specified backend (default: inductor).")
 parser.add_argument('--results', default='', type=str, metavar='FILENAME',
                     help='JSON filename for evaluation results')
-
+parser.add_argument('--device', default=1, type=int)
 
 def validate(args):
     setup_default_logging()
@@ -131,7 +131,11 @@ def validate(args):
     param_count = sum([m.numel() for m in bench.parameters()])
     print('Model %s created, param count: %d' % (args.model, param_count))
 
+    torch.cuda.set_device(args.device)
     bench = bench.cuda()
+
+    # Check the number of available GPUs
+    num_devices = torch.cuda.device_count()
 
     if args.torchscript:
         assert not args.apex_amp, \
@@ -191,6 +195,7 @@ def validate(args):
     mean_ap = 0.
     if dataset.parser.has_labels:
         mean_ap = evaluator.evaluate(output_result_file=args.results)
+        print(mean_ap)
     else:
         evaluator.save(args.results)
 

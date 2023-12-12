@@ -95,7 +95,7 @@ parser.add_argument('--pretrained', action='store_true', default=False,
                     help='Start with pretrained version of specified network (if avail)')
 parser.add_argument('--no-pretrained-backbone', action='store_true', default=False,
                     help='Do not start with pretrained backbone weights, fully random.')
-parser.add_argument('--initial-checkpoint', default='', type=str, metavar='PATH',
+parser.add_argument('--initial_checkpoint', default='', type=str, metavar='PATH',
                     help='Initialize model from this checkpoint (default: none)')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='Resume full model and optimizer state from checkpoint (default: none)')
@@ -227,7 +227,7 @@ parser.add_argument('--eval-metric', default='map', type=str, metavar='EVAL_METR
                     help='Best metric (default: "map"')
 parser.add_argument('--tta', type=int, default=0, metavar='N',
                     help='Test/inference time augmentation (oversampling) factor. 0=None (default: 0)')
-
+parser.add_argument('--device', default=0, type=int)
 
 def _parse_args():
     # Do we have a config file to parse?
@@ -257,19 +257,30 @@ def get_clip_parameters(model, exclude_head=False):
 def objective(hyperparameters):
     utils.setup_default_logging()
     args, args_text = _parse_args()
+    
+    hyperparameters_list = list(hyperparameters.keys())
 
-    args.lr = hyperparameters["lr"].iloc[0]
-    args.model = hyperparameters["model"].iloc[0]
-    args.checkpoint = f"params/{args.model}.pth.tar"
-    print(f"Learning rate is configured to {args.lr}")
-    print(f"Model architecture is configured to {args.model}")
+    if "lr" in hyperparameters_list:
+        args.lr = hyperparameters["lr"].iloc[0]
+        print(f"Learning rate is configured to {args.lr}")
+    if "model" in hyperparameters_list:
+        args.model = hyperparameters["model"].iloc[0]
+        args.checkpoint = f"params/{args.model}.pth.tar"
+        print(f"Model architecture is configured to {args.model}")
+    else:
+        args.checkpoint = args.initial_checkpoint
+    
+    if "momentum" in hyperparameters_list:
+        args.momentum = hyperparameters["momentum"].iloc[0]
+        print(f"Momentum is configured to {args.momentum}")
 
     args.pretrained_backbone = not args.no_pretrained_backbone
     args.prefetcher = not args.no_prefetcher
     args.distributed = False
     if 'WORLD_SIZE' in os.environ:
         args.distributed = int(os.environ['WORLD_SIZE']) > 1
-    args.device = 'cuda:0'
+
+    torch.cuda.set_device(args.device)
     args.world_size = 1
     args.rank = 0  # global rank
     device = utils.init_distributed_device(args)
@@ -759,19 +770,30 @@ def validate(model, loader, args, evaluator=None, log_suffix=''):
 
 if __name__ == '__main__':
     N_TRAILS = 20
-
+    '''
     space = DesignSpace().parse(
-        [{'name': 'lr', 'type': 'num', 'lb': 1e-4, 'ub': 1e-2},
+        [{'name': 'lr', 'type': 'num', 'lb': 1e-3, 'ub': 1e-1},
          {'name': 'model', 'type': 'cat', 'categories': [
              "efficientdet_d0", "efficientdet_d1", "tf_efficientdet_d2"]}
+         ])    
+    '''
+
+    space = DesignSpace().parse(
+        [{'name': 'lr', 'type': 'num', 'lb': 1e-3, 'ub': 1e-1}])
+        
+
+    '''
+    space = DesignSpace().parse(
+        [{'name': 'lr', 'type': 'num', 'lb': 1e-3, 'ub': 1e-1},
+         {'name': 'momentum', 'type': 'num', 'lb': 1e-3, 'ub': 1},
          ])
+    '''
     opt = HEBO(space, rand_sample=2)
     results = []
     for i in range(N_TRAILS):
         rec = opt.suggest(n_suggestions=1)
         acc = objective(rec)
         acc = np.array([[acc]], dtype=float)
-        print(acc)
         opt.observe(rec, acc)
         print('After %d iterations, best obj is %.2f' % (i, opt.y.max()))
 
