@@ -117,7 +117,7 @@ parser.add_argument('--clip-mode', type=str, default='norm',
                     help='Gradient clipping mode. One of ("norm", "value", "agc")')
 
 # Optimizer parameters
-parser.add_argument('--opt', default='momentum', type=str, metavar='OPTIMIZER',
+parser.add_argument('--opt', default='sgd', type=str, metavar='OPTIMIZER',
                     help='Optimizer (default: "momentum"')
 parser.add_argument('--opt-eps', default=None, type=float, metavar='EPSILON',
                     help='Optimizer Epsilon (default: None, optimizer default)')
@@ -767,6 +767,13 @@ def validate(model, loader, args, evaluator=None, log_suffix=''):
 
     return metrics
 
+def obj(params : pd.DataFrame) -> np.ndarray:
+    lr = params["lr"].iloc[0]
+    model = params["model"].iloc[0]
+    print(model)
+    if model == "tf_efficientdet_d2":
+        return (lr + 2)
+    return lr
 
 if __name__ == '__main__':
     N_TRAILS = 20
@@ -775,32 +782,35 @@ if __name__ == '__main__':
         [{'name': 'lr', 'type': 'num', 'lb': 1e-3, 'ub': 1e-1},
          {'name': 'model', 'type': 'cat', 'categories': [
              "efficientdet_d0", "efficientdet_d1", "tf_efficientdet_d2"]}
-         ])    
-    '''
+         ])
+    '''    
 
     space = DesignSpace().parse(
         [{'name': 'lr', 'type': 'num', 'lb': 1e-3, 'ub': 1e-1}])
-        
+      
 
     '''
     space = DesignSpace().parse(
         [{'name': 'lr', 'type': 'num', 'lb': 1e-3, 'ub': 1e-1},
          {'name': 'momentum', 'type': 'num', 'lb': 1e-3, 'ub': 1},
-         ])
-    '''
+         ]
+    )
+    ''' 
+
     opt = HEBO(space, rand_sample=2)
-    results = []
+    results = {
+        "acc" : []
+    }
     for i in range(N_TRAILS):
         rec = opt.suggest(n_suggestions=1)
         acc = objective(rec)
-        acc = np.array([[acc]], dtype=float)
-        opt.observe(rec, acc)
-        print('After %d iterations, best obj is %.2f' % (i, opt.y.max()))
+        print(acc)
+        acc_arr = np.array([[acc * -1]], dtype=float)
+        opt.observe(rec, acc_arr)
+        print('After %d iterations, best obj is %.2f' % (i, -1 * opt.y.min()))
 
         # Add to log
-        rec_cp = rec.copy()
-        rec_cp["acc"] = opt.y[i][0]
-        results.append(rec_cp)
+        results["acc"].append(acc)
 
-    concatenated_df = pd.concat(results)
-    concatenated_df.to_csv("logs/results.csv", index=False)
+    df = pd.DataFrame(results)
+    df.to_csv("logs/results.csv", index=False)
